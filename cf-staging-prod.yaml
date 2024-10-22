@@ -1,0 +1,179 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "Staging environment template with VPC, subnet, security group, and EC2 instance"
+
+Parameters:
+  InstanceType:
+    Description: "EC2 instance type"
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t3.micro
+      - t3.small
+    ConstraintDescription: "must be a valid EC2 instance type."
+
+  AmiId:
+    Description: "The AMI ID for the EC2 instance"
+    Type: String
+    Default: ami-005fc0f236362e99f
+    ConstraintDescription: "must be a valid AMI ID."
+
+  KeyNameId:
+    Description: "The Key Name ID for Access the EC2 instance"
+    Type: String
+    Default: key-local
+    ConstraintDescription: "must be a valid Key Name ID."
+
+  IamRoleId:
+    Description: "The Iam Role for the EC2 instance"
+    Type: String
+    Default: ec2-codedeploy-role
+    ConstraintDescription: "must be a valid Iam Role."
+
+Resources:
+  MyInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: StagingIGW
+
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: '100.0.0.0/16'
+      EnableDnsHostnames: True
+      EnableDnsSupport: True
+      Tags:
+        - Key: Name
+          Value: StagingVPC
+
+  MySubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: '100.0.1.0/24'
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      MapPublicIpOnLaunch: True
+      Tags:
+        - Key: Name
+          Value: StagingSubnet
+  
+  MyAttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref MyInternetGateway
+      VpcId: !Ref MyVPC
+  
+  MyRouteTable:
+    Type: AWS::EC2::RouteTable
+    DependsOn: MyVPC
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+      - Key: Name
+        Value: StagingRTB
+
+  MyRoute:
+    Type: AWS::EC2::Route
+    DependsOn: MyAttachGateway
+    Properties:
+      RouteTableId: !Ref MyRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyInternetGateway
+  
+  MyPublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref MyRouteTable
+      SubnetId: !Ref MySubnet
+
+  MySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for staging EC2 instance'
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  MyEC2Instancestaging:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: !Ref KeyNameId
+      InstanceType: !Ref InstanceType
+      SecurityGroupIds:
+        - !Ref MySecurityGroup
+      SubnetId: !Ref MySubnet
+      ImageId: !Ref AmiId
+      IamInstanceProfile: !Ref IamRoleId
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp2
+      Tags:
+        - Key: Name
+          Value: StagingInstance
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          apt-get update -y
+          wget https://raw.githubusercontent.com/tresnax/aws-training-kit/master/setup-codedeploy.sh
+          /bin/bash setup-codedeploy.sh
+          add-apt-repository ppa:deadsnakes/ppa -y
+          apt install -y python3.8 python3.8-venv
+    DeletionPolicy: Delete
+
+  MyEC2Instanceproduction:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: !Ref KeyNameId
+      InstanceType: !Ref InstanceType
+      SecurityGroupIds:
+        - !Ref MySecurityGroup
+      SubnetId: !Ref MySubnet
+      ImageId: !Ref AmiId
+      IamInstanceProfile: !Ref IamRoleId
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp2
+      Tags:
+        - Key: Name
+          Value: ProdInstance
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          apt-get update -y
+          wget https://raw.githubusercontent.com/tresnax/aws-training-kit/master/setup-codedeploy.sh
+          /bin/bash setup-codedeploy.sh
+          add-apt-repository ppa:deadsnakes/ppa -y
+          apt install -y python3.8 python3.8-venv
+    DeletionPolicy: Delete
+
+Outputs:
+  PublicDnsName:
+    Description: "IP Public For Staging"
+    Value: !Ref MyEC2Instancestaging
+#  PublicDnsName:
+#    Description: "IP Public For Prod"
+#    Value: !Ref MyEC2Instanceproduction
+    
